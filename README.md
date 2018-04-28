@@ -5,7 +5,7 @@ In this class project I investigate performance of different Machine Learning an
 Algorithms Used: 
 
 1. Naive Bayes
-2. Logistic Regreassion 
+2. Logistic Regression
 3. Support Vector Machine 
 4. Random Forest
 5. AdaBoost
