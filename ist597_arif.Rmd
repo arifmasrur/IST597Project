@@ -1,0 +1,321 @@
+---
+title: 'IST597: Wildfire-Climate Dynamics'
+author: "Arif Masrur"
+date: "April 24, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Configuring Space
+rm(list=ls())
+
+# Loading packages into R
+#install.packages("e1071")
+library(randomForest); library(e1071); library(gbm); library(ada); library(rpart); library(ROCR); library(vegan); library(dummies); library(klaR); library(ada); library(pROC); library(xgboost); library(glmnet); library(gridExtra)
+
+
+setwd("J:/Spring2018/IST597")
+firedata = read.csv("logreg_data.csv")
+```
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA}
+
+firedata$Y = as.factor(firedata$Y)
+# Divide into training and test
+n <- dim(firedata)[1]
+p <- dim(firedata)[2]
+
+set.seed(2016)
+test <- sample(n, round(n/4))
+train <- (1:n)[-test]
+fire.train <- firedata[train,]
+fire.test <- firedata[test,]
+
+
+par(mfrow = c(1,2))
+
+rocplot <- function(pred, truth, ...){
+  predob <- prediction(pred, truth)
+  perf <- performance(predob, "tpr", "fpr")
+  auc <- performance(predob,"auc")
+  auc <- round(as.numeric(auc@y.values),5)
+  plot(perf, colorize=TRUE,...)
+  abline(a=0, b= 1)
+  text(0.75, 0.25, auc, cex = .8)
+  text(0.75, 0.35, "AUC", cex = .8)
+}
+
+
+```
+## Naive Bayes
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+
+firemodel = naiveBayes(fire.train$Y ~ ., data = fire.train)
+
+class(firemodel)
+summary(firemodel)
+#print(firemodel)
+
+
+# ### Prediction
+# preds <- predict(firemodel, newdata = fire.test, type = "raw")
+# score = preds[,2]
+# pred = prediction(score, fire.test$Y)
+# nb.prff = performance(pred, "tpr", "fpr")
+# plot(nb.prff, main = "Test",col = "blue", lwd = 2)
+# abline(a = 0, b = 1, lwd = 2, lty = 2)
+
+### Prediction
+preds1 <- predict(firemodel, newdata = fire.test)
+preds <- predict(firemodel, newdata = fire.test, type = "raw")
+score = preds[,2]
+pred = prediction(score, fire.test$Y)
+nb.prff = performance(pred, "tpr", "fpr")
+plot(nb.prff)
+
+
+## Prediction accuracy
+conf_matrix = table(preds1, fire.test$Y)
+conf_matrix
+test.accuracy = (conf_matrix[1,1]+conf_matrix[2,2])/nrow(fire.test)
+test.accuracy
+
+
+```
+## Logistic Regression 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+
+glm.train <- glm(Y~., fire.train, family=binomial)
+#summary(glm.train)
+
+glm.probs=predict(glm.train, type="response")
+glm.pred=rep("0", 705)
+glm.pred[glm.probs >.5]="1"
+
+confusion1 <- table(glm.pred , fire.train$Y)
+#mean(glm.pred==seismic.train$class)
+
+train.accuracy = (confusion1[1,1]+confusion1[2,2])/nrow(fire.train)
+train.accuracy
+
+
+roc.Train <- roc(fire.train$Y, glm.probs, direction = "<")
+
+sensitivity <- confusion1[2,2]/sum(confusion1[,2])
+specificity <- confusion1[1,1]/sum(confusion1[,1])
+
+#confusion1
+#sensitivity
+#specificity
+
+glm.probs=predict(glm.train, fire.test, type="response")
+
+glm.pred=rep("0", 235)
+glm.pred[glm.probs >.5]="1"
+confusion2 <- table(glm.pred, fire.test$Y)
+#mean(glm.pred==seismic.test$class)
+
+test.accuracy = (confusion2[1,1]+confusion2[2,2])/nrow(fire.test)
+test.accuracy
+
+
+sensitivity <- confusion2[2,2]/sum(confusion2[,2])
+specificity <- confusion2[1,1]/sum(confusion2[,1])
+
+#confusion2
+#sensitivity
+#specificity
+
+super <- cbind(confusion1,confusion2)
+colnames(super) <- c("Train 0", "Train 1", "Test 0", "Test 1")
+rownames(super) <- c("Predict 0", "Predict 1")
+kable(super, caption="Training vs. Test for logistic regression")
+
+roc.Test <- roc(fire.test$Y, glm.probs, direction="<")
+
+par(mfrow = c(1,1))
+plot.roc(roc.Test, col="blue", auc.polygon=TRUE,main="ROC Curve", xlab="False Positive Rate", ylab="True Positive Rate", print.auc=TRUE)
+plot.roc(roc.Train, add=TRUE)
+
+```
+## Random Forest
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+
+bestmtry <- tuneRF(fire.train[-1], fire.train$Y, ntreeTry=100, 
+     stepFactor=1.5, improve=0.01, dobest=FALSE, plot = F)
+
+## RF on Training Data
+
+rf.fire = randomForest(Y~., data = fire.train, mtry=27, ntree=1000, importance = TRUE)
+yhat.rf.train = predict(rf.fire, type = "prob", newdata = fire.train)[,2]
+
+
+#par(mfrow = c(1,2))
+
+# ROC curve
+roc.Train <- roc(fire.train$Y, yhat.rf.train, direction = "<")
+plot.roc(roc.Train, col = "blue", auc.polygon = TRUE, main = "Full model, train", xlab = "False Positive Rate", ylab = "True Positive Rate", print.auc = TRUE)
+
+# Misclassification rate (FP+FN)/total
+confusion <- table(yhat.rf.train, fire.train$Y)
+train.accuracy = (confusion[1,1]+confusion[2,2])/nrow(fire.train)
+
+train.error = round((confusion[2,1]+confusion[1,2])/(sum(confusion[,1])+sum(confusion[,2])),3)
+train.error
+train.accuracy
+
+## RF on Test Data
+
+yhat.rf.test = predict(rf.fire, type = "prob", newdata = fire.test)[,2]
+roc.test <- roc(fire.test$Y, yhat.rf.test, direction = "<")
+
+# ROC curve
+plot.roc(roc.test, col = "blue", auc.polygon = TRUE, main = "Full model, test", xlab = "False Positive Rate", ylab = "True Positive Rate", print.auc = TRUE)
+
+# Misclassification rate (FP+FN)/total
+confusion <- table(yhat.rf.test, fire.test$Y)
+test.accuracy = (confusion[1,1]+confusion[2,2])/nrow(fire.test)
+test.error = round((confusion[2,1]+confusion[1,2])/(sum(confusion[,1])+sum(confusion[,2])),3)
+test.error
+test.accuracy
+importance(rf.fire)
+varImpPlot(rf.fire, type = 1)
+
+```
+# Support Vector Machine
+## Linear kernel 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+tune.out <- tune(svm, Y ~., data = fire.train, kernel = "linear", ranges = list(cost = c(.001,.01,.1,1,5)))
+
+# Look for a best model
+summary(tune.out)
+bestmod <- tune.out$best.model
+summary(bestmod)
+
+ypred <- predict(bestmod, fire.test)
+table(predict = ypred, truth = fire.test$Y)
+
+svmfit.best1 <- svm(Y~., data = fire.train, kernel = "linear", cost = bestmod$cost, decision.values = T)
+fitted1 <- attributes(predict(svmfit.best1, fire.train, decision.values = T))$decision.values
+fitted.test1 <- attributes(predict(svmfit.best1, fire.test, decision.values = T))$decision.values
+
+rocplot(fitted1, fire.train$Y, main = "Training data")
+rocplot(fitted.test1, fire.test$Y, main = "Test data")
+
+```
+## Radial kernel 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+tune.out2 <- tune(svm, Y ~., data = fire.train, kernel = "radial", ranges = list(cost = c(.001,.01,.1), gamma = c(1,5,50)))
+
+bestmod <- tune.out2$best.model
+ypred <- predict(bestmod, fire.test)
+table(predict = ypred, truth = fire.test$Y)
+
+svmrad2 <- svm(Y~., data = fire.train, kernel = "radial", gamma = tune.out2$best.model$gamma, cost = tune.out2$best.model$cost, decision.values = T)
+fitted2 <- attributes(predict(svmrad2, fire.train, decision.values = T))$decision.values
+fitted.test2 <- attributes(predict(svmrad2, fire.test, decision.values = T))$decision.values
+
+rocplot(fitted2, fire.train$Y, main = "Training data")
+rocplot(fitted.test2, fire.test$Y, main = "Test data")
+
+```
+## Polynomial kernel 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA,  fig.width=5, fig.height=4}
+
+tune.out3 <- tune(svm, Y ~., data = fire.train, kernel = "polynomial", ranges = list(cost = c(.001,.01,.1,1), degree = c(2,3)))
+bestmod <- tune.out3$best.model
+ypred <- predict(bestmod, fire.test)
+table(predict = ypred, truth = fire.test$Y)
+
+svmrad3 <- svm(Y~., data = fire.train, kernel = "polynomial", cost = tune.out3$best.model$cost, degree = tune.out3$best.model$degree, decision.values = T)
+fitted3 <- attributes(predict(svmrad3, fire.train, decision.values = T))$decision.values
+fitted.test3 <- attributes(predict(svmrad3, fire.test, decision.values = T))$decision.values
+
+rocplot(fitted3, fire.train$Y, main = "Training data")
+rocplot(fitted.test3, fire.test$Y, main = "Test data")
+
+```
+# AdaBoost 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA, fig.width=5, fig.height=4}
+
+# Build best ada boost model 
+model = ada(x = fire.train[,-1], 
+            y = fire.train$Y, 
+            iter=20, loss="logistic", verbose=TRUE) # 20 Iterations 
+
+# Look at the model summary
+model
+summary(model)
+
+# Predict on train data  
+pred_Train  =  predict(model, fire.train[,-1])  
+
+# Build confusion matrix and find accuracy   
+cm_Train = table(fire.train$Y, pred_Train)
+accu_Train= sum(diag(cm_Train))/sum(cm_Train)
+#rm(pred_Train, cm_Train)
+
+# Predict on test data
+pred_Test = predict(model, fire.test[,-1])
+
+# Build confusion matrix and find accuracy   
+cm_Test = table(fire.test$Y, pred_Test)
+accu_Test= sum(diag(cm_Test))/sum(cm_Test)
+#rm(pred_Test, cm_Test)
+
+accu_Train
+accu_Test
+
+
+
+```
+# XGBoost
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, comment=NA, fig.width=5, fig.height=4}
+xgb_fire = xgboost(data = data.matrix(fire.train[,-1]), 
+                   label = fire.train$Y,
+                   eta = 0.1,
+                   max_depth = 15,
+                   nround = 25,
+                   subsample = 0.5,
+                   colsample_bytree = 0.5,
+                   seed = 1,
+                   eval_metric = "merror",
+                   objective = "multi:softprob",
+                   num_class = 12,
+                   nthread = 3)
+
+y_pred = predict(xgb_fire, data.matrix(fire.test[,-1]))
+
+# Let's see what actaul tree looks like:
+model = xgb.dump(xgb_fire, with_stats = T)
+# Top 10 nodes of the model
+
+model[1:10] 
+
+# Get the feature real names
+names = dimnames(data.matrix(fire.train,-1))[[2]]
+
+
+# Compute feature importance matrix
+importance_matrix <- xgb.importance(names, model = xgb_fire)
+
+# Graph
+xgb.plot.importance(importance_matrix[1:10,], main = "Top 10 Important Features")
+
+```
