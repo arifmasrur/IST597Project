@@ -10,3 +10,6 @@ Algorithms Used:
 4. Random Forest
 5. AdaBoost
 6. XGBoost 
+
+# ist597codes_arif.R
+This file contains all codes for different classifcation algorithms utlized in this project. 
